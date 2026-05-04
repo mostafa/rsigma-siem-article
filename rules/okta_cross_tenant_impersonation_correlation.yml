@@ -1,0 +1,14 @@
+title: Okta Cross-Tenant Impersonation Sequence
+id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+name: okta_cross_tenant_impersonation
+correlation:
+    type: temporal_ordered
+    rules:
+        - bde30855-5c53-4c18-ae90-1ff79ebc9578
+        - 50e068d7-1e6b-4054-87e5-0a592c40c7e0
+        - 413d4a81-6c98-4479-9863-014785fd579c
+        - 969c7590-8c19-4797-8c1b-23155de6e7ac
+    group-by:
+        - actor.alternateId
+    timespan: 30m
+level: critical

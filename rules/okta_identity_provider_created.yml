@@ -1,0 +1,21 @@
+title: Okta Identity Provider Created
+id: 969c7590-8c19-4797-8c1b-23155de6e7ac
+status: test
+description: Detects the creation of a new identity provider in Okta.
+references:
+    - https://sec.okta.com/articles/2023/08/cross-tenant-impersonation-prevention-and-detection
+author: Austin Songer @austinsonger
+date: 2023-09-09
+tags:
+    - attack.persistence
+    - attack.t1556
+logsource:
+    product: okta
+    service: okta
+detection:
+    selection:
+        eventType: 'system.idp.lifecycle.create'
+    condition: selection
+falsepositives:
+    - Legitimate identity provider creation during M&A integration.
+level: medium

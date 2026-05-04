@@ -1,0 +1,28 @@
+multitenancy_enabled: false
+
+server:
+  http_listen_port: 9009
+
+ingester:
+  ring:
+    replication_factor: 1
+    instance_addr: 127.0.0.1
+
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+
+blocks_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/blocks
+  tsdb:
+    dir: /data/tsdb
+
+compactor:
+  data_dir: /data/compactor
+
+ruler_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/rules

@@ -1,0 +1,103 @@
+// ============================================================================
+// Grafana Alloy configuration for RSigma security observability pipeline.
+//
+// Two responsibilities:
+//   1. Log fanout: read Helr's NDJSON output, extract the inner event from
+//      the Helr envelope, send via OTLP to RSigma for detection and to
+//      Loki for long-term storage.
+//   2. Metrics collection: scrape RSigma's /metrics endpoint and forward
+//      to Prometheus via remote_write.
+//
+// Docs: https://grafana.com/docs/alloy/latest/
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// 1. Log ingestion: read Helr's NDJSON log file
+// ---------------------------------------------------------------------------
+// Helr outputs NDJSON lines with an envelope: {ts, source, endpoint, event, meta}.
+// The `event` field contains the raw log event (e.g., an Okta System Log entry).
+// The operators below parse the envelope and extract the inner event so that
+// Sigma rules can match against the original field names (eventType, actor, etc.).
+
+otelcol.receiver.filelog "helr" {
+  include  = ["/var/log/helr/*.ndjson"]
+  start_at = "beginning"
+
+  operators = [
+    {type = "json_parser", parse_from = "body", parse_to = "body"},
+    {type = "move", from = "body.source", to = "attributes.helr_source"},
+    {type = "move", from = "body.ts", to = "attributes.helr_ts"},
+    {type = "move", from = "body.event", to = "body"},
+  ]
+
+  resource = {
+    "service.name"             = "helr",
+    "deployment.environment"   = "demo",
+  }
+
+  output {
+    logs = [otelcol.processor.attributes.add_loki_hints.input]
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2. Add Loki label hints so the exporter creates useful stream labels
+// ---------------------------------------------------------------------------
+
+otelcol.processor.attributes "add_loki_hints" {
+  action {
+    key    = "loki.resource.labels"
+    value  = "service.name, deployment.environment"
+    action = "insert"
+  }
+
+  output {
+    logs = [otelcol.exporter.otlphttp.rsigma.input, otelcol.exporter.loki.default.input]
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. OTLP export to RSigma for real-time detection
+// ---------------------------------------------------------------------------
+
+otelcol.exporter.otlphttp "rsigma" {
+  client {
+    endpoint = "http://rsigma:9090"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Loki export for long-term log storage
+// ---------------------------------------------------------------------------
+
+otelcol.exporter.loki "default" {
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Metrics: scrape RSigma's /metrics and forward to Mimir
+// ---------------------------------------------------------------------------
+
+prometheus.scrape "rsigma" {
+  targets = [{
+    __address__ = "rsigma:9090",
+  }]
+  metrics_path    = "/metrics"
+  scrape_interval = "10s"
+  forward_to      = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://mimir:9009/api/v1/push"
+  }
+}

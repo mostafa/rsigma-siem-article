@@ -1,0 +1,120 @@
+services:
+  # Helr replays recorded Okta API responses and writes NDJSON to stdout.
+  # Each line is a Helr envelope: {ts, source, endpoint, event, meta}.
+  # The inner `event` field contains the raw Okta System Log event.
+  # In production, replace --replay-dir with a real Okta API URL.
+  helr:
+    image: debian:bookworm-slim
+    volumes:
+      - ./helr/config.yml:/etc/helr/config.yml:ro
+      - ./recordings:/recordings:ro
+      - helr-logs:/var/log/helr
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        apt-get update -qq && apt-get install -y -qq curl tar >/dev/null 2>&1
+        ARCH=$$(uname -m)
+        case "$$ARCH" in
+          aarch64) TRIPLE="aarch64-unknown-linux-gnu" ;;
+          *)       TRIPLE="x86_64-unknown-linux-gnu" ;;
+        esac
+        curl -sL "https://github.com/timescale/helr/releases/download/v0.6.0/helr-$${TRIPLE}.tar.gz" \
+          | tar xz -C /usr/local/bin
+        sleep 5
+        while true; do
+          helr run --config /etc/helr/config.yml --once --replay-dir /recordings \
+            >> /var/log/helr/events.ndjson 2>/dev/null
+          sleep 60
+        done
+
+  # RSigma detection daemon with OTLP ingestion enabled.
+  # The GHCR image is built with --all-features, which includes daemon-otlp.
+  # OTLP endpoints (/v1/logs for HTTP, LogsService/Export for gRPC) are
+  # always active on the same --api-addr port alongside the REST API.
+  rsigma:
+    image: ghcr.io/timescale/rsigma:latest
+    volumes:
+      - ./rules:/rules:ro
+    command:
+      - daemon
+      - -r
+      - /rules/
+      - --api-addr
+      - 0.0.0.0:9090
+      - --input
+      - http
+    ports:
+      - "9090:9090"
+
+  # Grafana Alloy: log fanout and metrics collection.
+  # Reads Helr's NDJSON output, extracts the inner event from the Helr
+  # envelope, sends events via OTLP to RSigma and to Loki.
+  # Scrapes RSigma's /metrics and forwards to Prometheus.
+  alloy:
+    image: grafana/alloy:latest
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - helr-logs:/var/log/helr:ro
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --stability.level=public-preview
+    ports:
+      - "12345:12345"
+    depends_on:
+      rsigma:
+        condition: service_started
+      loki:
+        condition: service_started
+      mimir:
+        condition: service_started
+
+  # Loki: log storage for raw events and detection history.
+  loki:
+    image: grafana/loki:3.4.3
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+
+  # Mimir: metrics storage for RSigma detection counters.
+  # Runs in monolithic mode (-target=all) with multi-tenancy disabled.
+  # Natively accepts Prometheus remote_write at /api/v1/push.
+  mimir:
+    image: grafana/mimir:2.15.0
+    volumes:
+      - ./mimir/config.yml:/etc/mimir/config.yml:ro
+    command:
+      - -config.file=/etc/mimir/config.yml
+      - -target=all
+    ports:
+      - "9009:9009"
+
+  # Grafana: dashboards and alerting with dynamic labels.
+  grafana:
+    image: grafana/grafana:12.4.3
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_ALERTING_ENABLED=true
+      - GF_UNIFIED_ALERTING_ENABLED=true
+      - GF_INSTALL_PLUGINS=grafana-lokiexplore-app
+    ports:
+      - "3000:3000"
+    depends_on:
+      - mimir
+      - loki
+
+  # Webhook tester: catches and displays alert notifications in a web UI.
+  # Open http://localhost:8080/s/e5a31f16-2ac3-4174-88f7-5f1130817784 to
+  # see Grafana alerts arrive in real time.
+  webhook-tester:
+    image: tarampampam/webhook-tester:2
+    environment:
+      - AUTO_CREATE_SESSIONS=true
+    ports:
+      - "8080:8080"
+
+volumes:
+  helr-logs:

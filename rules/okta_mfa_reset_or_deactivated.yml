@@ -1,0 +1,23 @@
+title: Okta MFA Reset or Deactivated
+id: 50e068d7-1e6b-4054-87e5-0a592c40c7e0
+status: test
+description: Detects when MFA is reset or deactivated for an Okta user account.
+references:
+    - https://sec.okta.com/articles/2023/08/cross-tenant-impersonation-prevention-and-detection
+author: Austin Songer @austinsonger
+date: 2023-09-09
+tags:
+    - attack.persistence
+    - attack.t1098.005
+logsource:
+    product: okta
+    service: okta
+detection:
+    selection:
+        eventType:
+            - user.mfa.factor.deactivate
+            - user.mfa.factor.reset_all
+    condition: selection
+falsepositives:
+    - Legitimate MFA reset by help desk staff.
+level: medium

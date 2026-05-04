@@ -1,0 +1,23 @@
+title: Okta Admin Role Assigned to an User or Group
+id: 413d4a81-6c98-4479-9863-014785fd579c
+status: test
+description: Detects when an admin role is assigned to a user or group in Okta.
+references:
+    - https://sec.okta.com/articles/2023/08/cross-tenant-impersonation-prevention-and-detection
+author: Austin Songer @austinsonger
+date: 2023-09-09
+tags:
+    - attack.persistence
+    - attack.t1098.003
+logsource:
+    product: okta
+    service: okta
+detection:
+    selection:
+        eventType:
+            - group.privilege.grant
+            - user.account.privilege.grant
+    condition: selection
+falsepositives:
+    - Legitimate admin role assignment during onboarding.
+level: medium

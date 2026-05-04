@@ -1,0 +1,180 @@
+# Grafana Alerting provisioning: alert rules with dynamic severity labels,
+# notification policies, and contact points.
+#
+# The dynamic label template reads the `level` label from RSigma's per-rule
+# Prometheus metrics and maps it to a P1-P4 severity scale. Notification
+# policies then route alerts based on the severity label.
+#
+# Docs: https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/
+
+apiVersion: 1
+
+# -- Contact points ----------------------------------------------------------
+
+contactPoints:
+  - orgId: 1
+    name: webhook-demo
+    receivers:
+      - uid: webhook-demo
+        type: webhook
+        settings:
+          url: "http://webhook-tester:8080/e5a31f16-2ac3-4174-88f7-5f1130817784"
+          httpMethod: POST
+        disableResolveMessage: false
+
+# -- Notification policies ----------------------------------------------------
+# Route alerts based on the dynamic `severity` label set by the alert rule.
+
+policies:
+  - orgId: 1
+    receiver: webhook-demo
+    group_by:
+      - grafana_folder
+      - alertname
+    routes:
+      - receiver: webhook-demo
+        matchers:
+          - severity = P1
+        group_wait: 10s
+        group_interval: 1m
+        repeat_interval: 5m
+        continue: false
+      - receiver: webhook-demo
+        matchers:
+          - severity = P2
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 15m
+        continue: false
+      - receiver: webhook-demo
+        matchers:
+          - severity =~ P3|P4
+        group_wait: 1m
+        group_interval: 10m
+        repeat_interval: 1h
+        continue: false
+
+# -- Alert rules --------------------------------------------------------------
+# Two rules: one for per-rule detection matches, one for correlation matches.
+# Both use a dynamic `severity` label that maps RSigma's Sigma-native `level`
+# label (critical/high/medium/low/informational) to P1-P4 priority.
+
+groups:
+  - orgId: 1
+    name: RSigma Detection Alerts
+    folder: RSigma
+    interval: 1m
+    rules:
+      # Alert when any Sigma detection rule fires
+      - uid: rsigma-detection-alert
+        title: RSigma Detection Match
+        condition: C
+        data:
+          # A: per-rule detection counter increase over last 5 minutes
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: increase(rsigma_detection_matches_by_rule_total[5m])
+              instant: false
+              range: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          # B: reduce to the last value per series
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+          # C: threshold -- fire when any detection counter increased
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 0
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        # Dynamic severity label: maps RSigma's `level` metric label to P1-P4.
+        # This is the key integration point -- the Sigma rule's severity level
+        # flows directly into Grafana's alert routing without manual mapping.
+        labels:
+          severity: '{{ if eq .Labels.level "critical" }}P1{{ else if eq .Labels.level "high" }}P2{{ else if eq .Labels.level "medium" }}P3{{ else }}P4{{ end }}'
+        annotations:
+          summary: 'RSigma detection: {{ .Labels.rule_title }}'
+          description: 'Sigma rule {{ .Labels.rule_title }} (level={{ .Labels.level }}) fired {{ .Values.B }} times in the last 5 minutes.'
+
+      # Alert when any correlation rule fires
+      - uid: rsigma-correlation-alert
+        title: RSigma Correlation Match
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: increase(rsigma_correlation_matches_by_rule_total[5m])
+              instant: false
+              range: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 0
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: '{{ if eq .Labels.level "critical" }}P1{{ else if eq .Labels.level "high" }}P2{{ else if eq .Labels.level "medium" }}P3{{ else }}P4{{ end }}'
+        annotations:
+          summary: 'RSigma correlation: {{ .Labels.rule_title }}'
+          description: 'Correlation rule {{ .Labels.rule_title }} (type={{ .Labels.correlation_type }}, level={{ .Labels.level }}) fired. This indicates a multi-stage attack pattern was detected.'
