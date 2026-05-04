@@ -2,7 +2,7 @@
 
 Companion repository for the article [Security Observability with RSigma and the LGTM Stack](https://mostafa.dev/).
 
-A complete, self-contained detection-to-alert pipeline using RSigma, Grafana Alloy, Loki, Mimir, and Grafana Alerting with dynamic labels. One `docker compose up` and you have a working lightweight SIEM.
+A complete, self-contained detection-to-alert pipeline using RSigma, Grafana Alloy, Loki, Mimir, Grafana 12 Alerting with dynamic labels, and a Webhook Tester for inspecting alert payloads. One `docker compose up` and you have a working lightweight SIEM.
 
 ## Architecture
 
@@ -15,10 +15,22 @@ flowchart LR
     Alloy -->|"remote_write"| Mimir
     Mimir --> Grafana
     Loki --> Grafana
-    Grafana -->|"dynamic-label alerts"| Alerting["Slack / PagerDuty"]
+    Grafana -->|"dynamic-label alerts"| WebhookTester["Webhook Tester"]
 ```
 
 ## Quick start
+
+Docker requires authentication for pulling from `ghcr.io`, even for public packages. Log in first:
+
+```bash
+# With GitHub CLI
+gh auth token | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+
+# Or with a personal access token (read:packages scope)
+echo $GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+Then start the stack:
 
 ```bash
 docker compose up -d
@@ -29,6 +41,7 @@ The first run downloads the Helr binary from GitHub Releases, which takes a few 
 Wait about 15 seconds for the stack to initialize, then open:
 
 - **Grafana**: http://localhost:3000 (no login required)
+- **Webhook Tester**: http://localhost:8080 (alert notifications UI)
 - **RSigma metrics**: http://localhost:9090/metrics
 - **RSigma health**: http://localhost:9090/healthz
 - **Mimir**: http://localhost:9009
@@ -50,6 +63,7 @@ After the replay completes, you should see:
    - Proxy session (level=high) -> severity=P2
    - MFA/Admin/IdP (level=medium) -> severity=P3
    - Cross-tenant correlation (level=critical) -> severity=P1
+5. **Webhook Tester** receiving alert notifications at http://localhost:8080. Open the session URL shown in `docker-compose.yml` comments to inspect the full payloads.
 
 ## Scenario
 
@@ -59,7 +73,7 @@ Okta cross-tenant impersonation attack (August 2023). Six sample events, four Si
 
 ```
 .
-├── docker-compose.yml                         # Full stack
+├── docker-compose.yml                         # Full stack (7 services)
 ├── helr/
 │   └── config.yml                             # Helr source configuration
 ├── recordings/
@@ -100,7 +114,7 @@ The key integration between RSigma and Grafana Alerting is the dynamic `severity
 {{- end -}}
 ```
 
-Notification policies then route by `severity`: P1 to incident management, P2 to on-call, P3-P4 to a low-priority queue.
+Notification policies then route by `severity`. In this demo, all routes point to the [Webhook Tester](https://github.com/tarampampam/webhook-tester) service so you can inspect the full alert payloads. In a real-world setup, you would replace these with incident response and management (IRM) tools like PagerDuty or Grafana OnCall for P1, messaging platforms like Slack or Microsoft Teams for P2, and email or a ticket queue for P3-P4.
 
 ## Related
 
@@ -108,6 +122,7 @@ Notification policies then route by `severity`: P1 to incident management, P2 to
 - [Helr](https://github.com/timescale/helr) -- Log source poller
 - [Grafana Alloy](https://grafana.com/docs/alloy/latest/) -- OpenTelemetry collector
 - [Grafana dynamic labels](https://grafana.com/docs/grafana/latest/alerting/examples/dynamic-labels/) -- Dynamic label documentation
+- [Webhook Tester](https://github.com/tarampampam/webhook-tester) -- Self-hosted webhook receiver with web UI
 
 ## License
 
